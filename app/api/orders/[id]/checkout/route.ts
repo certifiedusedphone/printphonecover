@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type Stripe from "stripe";
 import { db, BUCKET } from "@/lib/server/db";
 import { stripe } from "@/lib/server/stripe";
 import { SHIPPING, type ShippingKey } from "@/lib/shipping";
@@ -15,9 +16,16 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   const { data: files } = await s.storage.from(BUCKET).list(o.id);
   if (!files?.some((f) => f.name === "print.png")) return NextResponse.json({ error: "The design upload did not finish. Please try again." }, { status: 400 });
 
+  if (!process.env.STRIPE_SECRET_KEY) {
+    console.error("Checkout blocked: STRIPE_SECRET_KEY is not set in Cloudflare.");
+    return NextResponse.json({ error: "Online payment isn't switched on yet. Please try again later." }, { status: 503 });
+  }
+
   const site = process.env.NEXT_PUBLIC_SITE_URL || new URL(req.url).origin;
   const ship = SHIPPING[o.shipping_method as ShippingKey];
-  const session = await stripe().checkout.sessions.create({
+  let session: Stripe.Checkout.Session;
+  try {
+    session = await stripe().checkout.sessions.create({
     mode: "payment",
     customer_email: o.email,
     client_reference_id: o.id,
@@ -43,6 +51,10 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     success_url: `${site}/order/${o.id}?t=${o.token}&paid=1`,
     cancel_url: `${site}/design?cancelled=1`,
   });
+  } catch (e) {
+    console.error("Stripe checkout failed:", (e as Error).message);
+    return NextResponse.json({ error: "Payment couldn't be started. Please try again in a moment." }, { status: 502 });
+  }
 
   await s.from("orders").update({ stripe_session_id: session.id }).eq("id", o.id);
   return NextResponse.json({ url: session.url });

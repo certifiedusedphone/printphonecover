@@ -7,6 +7,7 @@ import {
 } from "@/lib/design/render";
 import { SHIPPING, money, type Address, type ShippingKey } from "@/lib/shipping";
 import { supabaseBrowser } from "@/lib/supabase-browser";
+import { readJson } from "@/lib/fetch-json";
 import { AddressFields } from "./AddressFields";
 import { CaseThumb, StickerThumb } from "./CaseThumb";
 import { Logo } from "./Logo";
@@ -99,8 +100,9 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
     if (!formRef.current?.checkValidity()) { formRef.current?.reportValidity(); return; }
     setBusy("Checking your address with USPS…");
     try {
-      const r = await fetch("/api/address/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(address) }).then((x) => x.json());
-      if (!r.ok) { setCheck({ kind: "bad", message: r.message }); setBusy(""); return; }
+      const r = await fetch("/api/address/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(address) }).then((x) => readJson<{ ok: boolean; message?: string; changed?: boolean; skipped?: boolean; address: Address }>(x));
+      if (r.error) { setError(r.error); setBusy(""); return; }
+      if (!r.ok) { setCheck({ kind: "bad", message: r.message ?? "" }); setBusy(""); return; }
       if (r.changed) { setCheck({ kind: "suggest", suggested: r.address }); setBusy(""); return; }
       await placeOrder(address, !r.skipped);
     } catch { setError("Something went wrong. Please try again."); setBusy(""); }
@@ -120,7 +122,7 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
       const created = await fetch("/api/orders", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ variantId: variant.id, design: ed.design, email, phone, address: addr, addressVerified: verified, shipping: ship }),
-      }).then(async (x) => ({ ok: x.ok, j: await x.json() }));
+      }).then(async (x) => ({ ok: x.ok, j: await readJson<{ orderId: string; token: string; uploads: { print: { path: string; token: string }; preview: { path: string; token: string } } }>(x) }));
       if (!created.ok) throw new Error(created.j.error || "Could not create the order.");
       const { orderId, token, uploads } = created.j;
       setBusy("Uploading your design…");
@@ -132,7 +134,7 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
       if (up.some((u) => u.error)) throw new Error("The upload didn't finish. Check your connection and try again.");
       setBusy("Opening secure payment…");
       const pay = await fetch(`/api/orders/${orderId}/checkout`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) })
-        .then(async (x) => ({ ok: x.ok, j: await x.json() }));
+        .then(async (x) => ({ ok: x.ok, j: await readJson<{ url?: string }>(x) }));
       if (!pay.ok || !pay.j.url) throw new Error(pay.j.error || "Could not open payment.");
       window.location.href = pay.j.url;
     } catch (err) { setError((err as Error).message); setBusy(""); }

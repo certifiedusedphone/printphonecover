@@ -28,7 +28,7 @@ export function AddressFields({ value, onChange }: { value: Address; onChange: (
     timer.current = setTimeout(async () => {
       try {
         const r = await fetch(`/api/address/autocomplete?q=${encodeURIComponent(q)}&session=${session.current}`);
-        const j = await r.json();
+        const j = await r.json().catch(() => ({}));
         setList(j.suggestions ?? []); setActive(-1); setOpen(true);
       } catch { setList([]); }
     }, 250);
@@ -39,7 +39,7 @@ export function AddressFields({ value, onChange }: { value: Address; onChange: (
     setOpen(false); setList([]);
     try {
       const r = await fetch(`/api/address/details?id=${encodeURIComponent(s.placeId)}&session=${session.current}`);
-      const j = await r.json();
+      const j = await r.json().catch(() => ({}));
       if (j.address) {
         skipNext.current = true;
         onChange({ ...value, line1: j.address.line1 || s.main, line2: j.address.line2 || value.line2, city: j.address.city, state: j.address.state, zip: j.address.zip });

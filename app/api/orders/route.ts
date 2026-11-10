@@ -16,6 +16,13 @@ type Body = {
 // Step 1 of checkout: create a pending order and hand back signed upload URLs
 // so the browser can upload the print file and preview straight to storage.
 export async function POST(req: Request) {
+  try { return await create(req); } catch (e) {
+    console.error("Order create failed:", (e as Error).message);
+    return NextResponse.json({ error: "Could not create the order. Please try again." }, { status: 500 });
+  }
+}
+
+async function create(req: Request) {
   const b = (await req.json()) as Body;
   const ship = SHIPPING[b.shipping];
   const a = b.address;
