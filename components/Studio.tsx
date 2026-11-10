@@ -1,0 +1,374 @@
+"use client";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Editor } from "@/lib/design/editor";
+import {
+  COLORS, FONTS, PATTERNS, STICKERS, dims, renderPreview, renderPrintFile,
+  type Catalog, type FontKey,
+} from "@/lib/design/render";
+import { SHIPPING, money, type Address, type ShippingKey } from "@/lib/shipping";
+import { supabaseBrowser } from "@/lib/supabase-browser";
+import { AddressFields } from "./AddressFields";
+import { CaseThumb, StickerThumb } from "./CaseThumb";
+import { Logo } from "./Logo";
+
+const plain = (c: CanvasRenderingContext2D, W: number, H: number) => { c.fillStyle = "#F2EFF4"; c.fillRect(0, 0, W, H); };
+const half = PATTERNS.halftone.draw;
+const heart = (c: CanvasRenderingContext2D, W: number, H: number) => { c.save(); c.translate(W / 2, H * 0.58); c.scale(W / 520, W / 520); STICKERS.heart.draw(c, "#E4007C"); c.restore(); };
+const TABS = [["photo", "Photo"], ["text", "Text"], ["bg", "Background"], ["designs", "Designs"], ["stickers", "Stickers"]] as const;
+type Tab = (typeof TABS)[number][0];
+type AddrCheck = null | { kind: "suggest"; suggested: Address } | { kind: "bad"; message: string };
+
+export default function Studio({ catalog, cancelled }: { catalog: Catalog; cancelled?: boolean }) {
+  const firstBrand = catalog.brands.find((b) => b.active)?.id ?? catalog.brands[0]?.id;
+  const [brand, setBrand] = useState(firstBrand);
+  const [deviceId, setDeviceId] = useState(catalog.devices.find((d) => d.brand_id === firstBrand)?.id ?? catalog.devices[0]?.id);
+  const [productId, setProductId] = useState(catalog.products[0]?.id);
+  const [step, setStep] = useState(1);
+  const [tab, setTab] = useState<Tab>("photo");
+  const [newText, setNewText] = useState("Made by you");
+  const [newFont, setNewFont] = useState<FontKey>("bold");
+  const [newColor, setNewColor] = useState("#FFFFFF");
+  const [photoError, setPhotoError] = useState("");
+
+  const device = catalog.devices.find((d) => d.id === deviceId)!;
+  const product = catalog.products.find((p) => p.id === productId)!;
+  const variant = catalog.variants.find((v) => v.device_id === deviceId && v.product_id === productId);
+
+  const edRef = useRef<Editor | null>(null);
+  if (!edRef.current && device) { edRef.current = new Editor(device.geometry); edRef.current.finish = product?.finish ?? "solid"; edRef.current.seedSample(); }
+  const ed = edRef.current!;
+  useSyncExternalStore(ed.subscribe, () => ed.version, () => 0);
+
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const bedRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    ed.attach(canvasRef.current); ed.resetHistory();
+    document.fonts?.ready.then(() => Promise.all(Object.values(FONTS).map((f) => document.fonts.load(`${f.weight} 40px ${f.css}`).catch(() => null))))
+      .then(() => { ed.remeasureText(); ed.resetHistory(); });
+    return () => ed.detach();
+  }, [ed]);
+
+  useEffect(() => { if (device) ed.setGeometry(device.geometry); }, [device, ed]);
+  useEffect(() => { if (product) ed.setFinish(product.finish); }, [product, ed]);
+
+  function go(n: number) { if (n !== 3) ed.select(null); setStep(n); }
+
+  async function addFile(f?: File | null) {
+    if (!f) return; setPhotoError("");
+    try { await ed.addImage(f); setStep(3); } catch (e) { setPhotoError((e as Error).message); }
+  }
+
+  /* ---------- checkout ---------- */
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState<Address>({ name: "", line1: "", line2: "", city: "", state: "", zip: "" });
+  const [ship, setShip] = useState<ShippingKey>("standard");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [check, setCheck] = useState<AddrCheck>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const total = (variant?.price_cents ?? 0) + SHIPPING[ship].cents;
+  const lowDpi = ed.lowestPhotoDpi();
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault(); setError(""); setCheck(null);
+    if (!formRef.current?.checkValidity()) { formRef.current?.reportValidity(); return; }
+    setBusy("Checking your address with USPS…");
+    try {
+      const r = await fetch("/api/address/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(address) }).then((x) => x.json());
+      if (!r.ok) { setCheck({ kind: "bad", message: r.message }); setBusy(""); return; }
+      if (r.changed) { setCheck({ kind: "suggest", suggested: r.address }); setBusy(""); return; }
+      await placeOrder(address, !r.skipped);
+    } catch { setError("Something went wrong. Please try again."); setBusy(""); }
+  }
+
+  async function placeOrder(addr: Address, verified: boolean) {
+    setCheck(null); setError("");
+    if (!variant) { setError("This case isn't available for that phone."); return; }
+    try {
+      setBusy("Preparing your print file…");
+      ed.select(null);
+      const [print, preview] = await Promise.all([
+        renderPrintFile(device.geometry, ed.design, ed.images),
+        renderPreview(device.geometry, product.finish, ed.design, ed.images),
+      ]);
+      setBusy("Saving your order…");
+      const created = await fetch("/api/orders", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ variantId: variant.id, design: ed.design, email, phone, address: addr, addressVerified: verified, shipping: ship }),
+      }).then(async (x) => ({ ok: x.ok, j: await x.json() }));
+      if (!created.ok) throw new Error(created.j.error || "Could not create the order.");
+      const { orderId, token, uploads } = created.j;
+      setBusy("Uploading your design…");
+      const store = supabaseBrowser().storage.from("orders");
+      const up = await Promise.all([
+        store.uploadToSignedUrl(uploads.print.path, uploads.print.token, print, { contentType: "image/png" }),
+        store.uploadToSignedUrl(uploads.preview.path, uploads.preview.token, preview, { contentType: "image/jpeg" }),
+      ]);
+      if (up.some((u) => u.error)) throw new Error("The upload didn't finish. Check your connection and try again.");
+      setBusy("Opening secure payment…");
+      const pay = await fetch(`/api/orders/${orderId}/checkout`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) })
+        .then(async (x) => ({ ok: x.ok, j: await x.json() }));
+      if (!pay.ok || !pay.j.url) throw new Error(pay.j.error || "Could not open payment.");
+      window.location.href = pay.j.url;
+    } catch (err) { setError((err as Error).message); setBusy(""); }
+  }
+
+  /* ---------- selected layer ---------- */
+  const L = step === 3 ? ed.selected() : null;
+  const pct = L ? Math.round((L.s / L.base) * 100) : 100;
+  const deg = L ? Math.round((((L.rot * 180) / Math.PI + 540) % 360) - 180) : 0;
+  const { W, H } = dims(device.geometry);
+
+  const brandDevices = useMemo(() => catalog.devices.filter((d) => d.brand_id === brand), [catalog.devices, brand]);
+
+  return (
+    <>
+      <header className="top">
+        <div className="wrap top-in">
+          <Logo />
+          <ol className="steps">
+            {["Phone", "Case", "Design", "Checkout"].map((label, i) => (
+              <li key={label}>
+                <button aria-current={step === i + 1 ? "step" : undefined} className={step > i + 1 ? "done" : ""} onClick={() => go(i + 1)}>
+                  <span className="n">{i + 1}</span><span className="lbl">{label}</span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </header>
+
+      <main className="wrap layout">
+        <section className="stage" aria-label="Case preview">
+          <div className="bed" ref={bedRef}
+            onDragOver={(e) => { e.preventDefault(); bedRef.current?.classList.add("drop"); }}
+            onDragLeave={() => bedRef.current?.classList.remove("drop")}
+            onDrop={(e) => { e.preventDefault(); bedRef.current?.classList.remove("drop"); addFile(e.dataTransfer.files[0]); }}>
+            <canvas ref={canvasRef} tabIndex={0} aria-label="Phone case preview. Drag items to move them; drag the round handle to resize and rotate."
+              onPointerDown={() => step !== 3 && setStep(3)} />
+            <div className="bedtag"><span className="cmyk" aria-hidden="true"><i style={{ background: "#00A0E9" }} /><i style={{ background: "#E4007C" }} /><i style={{ background: "#FFD400" }} /><i style={{ background: "#17141C" }} /></span>Print bed · 300 dpi</div>
+          </div>
+          <div className="stagebar">
+            <button className="icon-btn" disabled={!ed.canUndo} onClick={() => ed.undo()}>Undo</button>
+            <button className="icon-btn" disabled={!ed.canRedo} onClick={() => ed.redo()}>Redo</button>
+            <span className="specs">Print area {device.geometry.w} × {device.geometry.h} mm · {W} × {H} px</span>
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="summary">
+            <span className="chip"><b>{device.name}</b></span>
+            <span className="chip"><b>{product.code}</b> {product.name}</span>
+            {variant && <span className="chip"><b>{money(variant.price_cents)}</b></span>}
+          </div>
+          {cancelled && step === 1 && <p className="warn">Payment was cancelled, so you weren&apos;t charged. Design your case again whenever you&apos;re ready.</p>}
+
+          {step === 1 && (
+            <div className="pane">
+              <div className="pane-head"><span className="eyebrow">Step 1</span><h2>Choose your phone</h2><p>Pick the exact model so the camera cutout lines up.</p></div>
+              <div className="brands">
+                {catalog.brands.map((b) => (
+                  <button key={b.id} disabled={!b.active} aria-pressed={b.id === brand} onClick={() => setBrand(b.id)}>
+                    {b.name}{!b.active && <small>Soon</small>}
+                  </button>
+                ))}
+              </div>
+              <div className="grid3">
+                {brandDevices.map((d) => (
+                  <button key={d.id} className="card" aria-pressed={d.id === deviceId} onClick={() => { setDeviceId(d.id); go(2); }}>
+                    <CaseThumb geometry={d.geometry} finish="solid" content={plain} width={64} height={110} />
+                    {d.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="pane">
+              <div className="pane-head"><span className="eyebrow">Step 2</span><h2>Choose your case</h2><p>Cases available for {device.name}.</p></div>
+              {catalog.products.map((p) => {
+                const v = catalog.variants.find((x) => x.device_id === deviceId && x.product_id === p.id);
+                const out = !v || v.stock <= 0;
+                return (
+                  <button key={p.id} className="case" disabled={out} aria-pressed={p.id === productId} onClick={() => { setProductId(p.id); go(3); }}>
+                    <CaseThumb geometry={device.geometry} finish={p.finish} content={p.finish === "solid" ? half : heart} width={76} height={130} />
+                    <div>
+                      <h3>{p.name}<span className="code">{p.code}</span></h3>
+                      <p>{p.description}</p>
+                      <span className="price">{v ? money(v.price_cents) : "—"}</span>{out && <span className="note"> · Out of stock</span>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {step === 3 && (
+            <div className="pane">
+              <div className="pane-head"><span className="eyebrow">Step 3</span><h2>Design it</h2><p>Add a photo, text or stickers. Tap anything on the case to edit it.</p></div>
+
+              {L && (
+                <div className="sel">
+                  <div className="sel-head"><span>Selected: {L.type === "image" ? "Photo" : L.type === "text" ? "Text" : "Sticker"}</span><button className="mini" onClick={() => ed.select(null)}>Done</button></div>
+                  {L.type === "text" && (
+                    <>
+                      <div className="field"><label htmlFor="selText">Text</label>
+                        <input id="selText" maxLength={40} value={L.text} onChange={(e) => { L.text = e.target.value || " "; ed.remeasureText(); }} onBlur={() => ed.commit()} /></div>
+                      <div className="fonts">
+                        {(Object.keys(FONTS) as FontKey[]).map((k) => (
+                          <button key={k} aria-pressed={L.font === k} style={{ fontFamily: FONTS[k].css, fontWeight: FONTS[k].weight }}
+                            onClick={() => { L.font = k; ed.remeasureText(); ed.commit(); }}>{FONTS[k].label}</button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                  <div className="range"><label htmlFor="selSize">Size</label>
+                    <input type="range" id="selSize" min={10} max={300} value={Math.min(300, Math.max(10, pct))}
+                      onChange={(e) => { L.s = (L.base * Number(e.target.value)) / 100; ed.changed(); }} onPointerUp={() => ed.commit()} onKeyUp={() => ed.commit()} />
+                    <output>{pct}%</output></div>
+                  <div className="range"><label htmlFor="selRot">Rotate</label>
+                    <input type="range" id="selRot" min={-180} max={180} value={deg}
+                      onChange={(e) => { L.rot = (Number(e.target.value) * Math.PI) / 180; ed.changed(); }} onPointerUp={() => ed.commit()} onKeyUp={() => ed.commit()} />
+                    <output>{deg}°</output></div>
+                  {L.type !== "image" && (
+                    <div className="swatches">
+                      {COLORS.map((c) => <button key={c} className="sw" style={{ background: c }} aria-label={"Color " + c} aria-pressed={L.color === c} onClick={() => { L.color = c; ed.changed(true); }} />)}
+                    </div>
+                  )}
+                  {L.type === "image" && 300 / L.s < 150 && (
+                    <p className="warn">This photo is stretched to about {Math.round(300 / L.s)} dpi, so it may print blurry. Make it smaller or upload a larger original.</p>
+                  )}
+                  <div className="row">
+                    <button className="mini" onClick={() => ed.center()}>Center</button>
+                    {L.type === "image" && <button className="mini" onClick={() => ed.fill()}>Fill case</button>}
+                    <button className="mini" onClick={() => { L.flip = !L.flip; ed.changed(true); }}>Flip</button>
+                    <button className="mini" onClick={() => ed.reorder(1)}>Bring forward</button>
+                    <button className="mini" onClick={() => ed.reorder(-1)}>Send back</button>
+                    <button className="mini danger" onClick={() => ed.remove()}>Delete</button>
+                  </div>
+                </div>
+              )}
+
+              <div className="tabs" role="tablist">
+                {TABS.map(([k, label]) => <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>{label}</button>)}
+              </div>
+
+              {tab === "photo" && (
+                <div className="tabpane">
+                  {photoError && <p className="error">{photoError}</p>}
+                  <label className="drop-zone" htmlFor="file">
+                    <strong>Upload a photo</strong>
+                    <span>JPG or PNG from your phone or computer. You can also drop it on the case.</span>
+                    <input type="file" id="file" accept="image/*" onChange={(e) => { addFile(e.target.files?.[0]); e.target.value = ""; }} />
+                  </label>
+                  <p className="note">For a sharp print, use the original photo, not a screenshot. About {W} × {H} pixels or larger fills the whole case at full quality.</p>
+                </div>
+              )}
+              {tab === "text" && (
+                <div className="tabpane">
+                  <div className="field"><label htmlFor="newText">Your text</label><input id="newText" maxLength={40} value={newText} onChange={(e) => setNewText(e.target.value)} /></div>
+                  <div className="fonts">
+                    {(Object.keys(FONTS) as FontKey[]).map((k) => (
+                      <button key={k} aria-pressed={newFont === k} style={{ fontFamily: FONTS[k].css, fontWeight: FONTS[k].weight }} onClick={() => setNewFont(k)}>{FONTS[k].label}</button>
+                    ))}
+                  </div>
+                  <div className="swatches">
+                    {COLORS.map((c) => <button key={c} className="sw" style={{ background: c }} aria-label={"Text color " + c} aria-pressed={newColor === c} onClick={() => setNewColor(c)} />)}
+                  </div>
+                  <button className="btn" onClick={() => ed.addText(newText.trim(), newFont, newColor)}>Add text</button>
+                </div>
+              )}
+              {tab === "bg" && (
+                <div className="tabpane">
+                  <p className="note">Fills the whole case behind your photo and text.</p>
+                  <div className="swatches">
+                    {COLORS.map((c) => <button key={c} className="sw" style={{ background: c }} aria-label={"Background " + c}
+                      aria-pressed={ed.design.bg.kind === "color" && ed.design.bg.value === c} onClick={() => ed.setBg({ kind: "color", value: c })} />)}
+                  </div>
+                </div>
+              )}
+              {tab === "designs" && (
+                <div className="thumbs">
+                  {Object.entries(PATTERNS).map(([id, P]) => (
+                    <button key={id} className="thumb" aria-pressed={ed.design.bg.kind === "pattern" && ed.design.bg.id === id} onClick={() => ed.setBg({ kind: "pattern", id })}>
+                      <CaseThumb geometry={device.geometry} finish={product.finish} content={P.draw} width={56} height={96} />{P.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {tab === "stickers" && (
+                <div className="thumbs">
+                  {Object.entries(STICKERS).map(([id, S]) => (
+                    <button key={id} className="thumb" onClick={() => ed.addSticker(id)}><StickerThumb draw={S.draw} color={S.color} />{S.name}</button>
+                  ))}
+                </div>
+              )}
+
+              {lowDpi < 150 && !L && <p className="warn">One of your photos may print blurry. Tap it to see details.</p>}
+              <div className="foot">
+                <button className="btn-ghost" onClick={() => go(2)}>Back</button>
+                <button className="btn" onClick={() => go(4)}>Continue to checkout</button>
+              </div>
+            </div>
+          )}
+
+          {step === 4 && (
+            <div className="pane">
+              <div className="pane-head"><span className="eyebrow">Step 4</span><h2>Shipping and payment</h2><p>We print your case and ship it anywhere in the United States.</p></div>
+              <form className="checkout" ref={formRef} noValidate onSubmit={submit}>
+                <div className="two">
+                  <div className="field"><label htmlFor="email">Email for order updates</label>
+                    <input id="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
+                  <div className="field"><label htmlFor="phone">Phone (optional)</label>
+                    <input id="phone" type="tel" autoComplete="tel" value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
+                </div>
+                <AddressFields value={address} onChange={(a) => { setAddress(a); setCheck(null); }} />
+
+                {check?.kind === "suggest" && (
+                  <div className="addr-check">
+                    <strong>USPS has a slightly different version of this address</strong>
+                    <address>{check.suggested.line1}{check.suggested.line2 ? `, ${check.suggested.line2}` : ""}<br />{check.suggested.city}, {check.suggested.state} {check.suggested.zip}</address>
+                    <div className="row">
+                      <button type="button" className="btn" disabled={!!busy} onClick={() => { const a = { ...check.suggested, name: address.name }; setAddress(a); placeOrder(a, true); }}>Use this address</button>
+                      <button type="button" className="btn-ghost" disabled={!!busy} onClick={() => placeOrder(address, false)}>Keep what I typed</button>
+                    </div>
+                  </div>
+                )}
+                {check?.kind === "bad" && (
+                  <div className="addr-check">
+                    <p className="error">USPS couldn&apos;t confirm this address. {check.message}</p>
+                    <p className="note">Check the street number, apartment and ZIP. If you&apos;re sure it&apos;s right, you can still ship to it.</p>
+                    <div className="row">
+                      <button type="button" className="btn-ghost" onClick={() => { setCheck(null); document.getElementById("addr1")?.focus(); }}>Edit address</button>
+                      <button type="button" className="btn-ghost" disabled={!!busy} onClick={() => placeOrder(address, false)}>Ship to it anyway</button>
+                    </div>
+                  </div>
+                )}
+
+                <fieldset>
+                  <legend>Shipping</legend>
+                  {(Object.keys(SHIPPING) as ShippingKey[]).map((k) => (
+                    <label key={k} className="ship"><input type="radio" name="ship" checked={ship === k} onChange={() => setShip(k)} />
+                      <span>{SHIPPING[k].label}<small>{SHIPPING[k].detail}</small></span><b>{money(SHIPPING[k].cents)}</b></label>
+                  ))}
+                </fieldset>
+                <div className="totals">
+                  <div><span>{product.name} for {device.name}</span><span>{money(variant?.price_cents ?? 0)}</span></div>
+                  <div><span>{SHIPPING[ship].label} shipping</span><span>{money(SHIPPING[ship].cents)}</span></div>
+                  <div className="grand"><span>Total before tax</span><span>{money(total)}</span></div>
+                </div>
+                {error && <p className="error">{error}</p>}
+                <button className="btn block" type="submit" disabled={!!busy || !!check}>{busy || `Pay ${money(total)} with Stripe`}</button>
+                <p className="stripe-note">Secure card, Apple Pay and Google Pay checkout by Stripe. Sales tax is added at payment.</p>
+              </form>
+              <button className="btn-ghost" onClick={() => go(3)}>Back to design</button>
+            </div>
+          )}
+        </section>
+      </main>
+    </>
+  );
+}
