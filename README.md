@@ -65,8 +65,9 @@ Local development: `npm install`, copy `.env.example` to `.env.local`, `npm run 
 
 ## Before going live
 
-- **Calibrate outlines.** The iPhone 16 / 16 Pro / 16 Pro Max outlines are close approximations. For each model: place a test order, print it on the machine, compare edges and the camera cutout, then adjust the numbers in **Admin → Catalog → Print outline** and print again until it lines up.
-- **Add more models** in Admin → Catalog → Add a phone model, then set prices, stock and tick For sale. Turn on a brand (Samsung, Google, Moto) once it has models.
+- **Phone models and masks.** `supabase/seed.sql` loads every model on the vending machine (60 models, M2 and M3 cases) with the machine's own mask images. Run it again any time; it keeps your prices and stock. Then open **Admin → Catalog → Copy masks to our storage** once.
+- **Test print** one order per case type on the machine to confirm the print file lines up.
+- **New machine models:** Admin → Catalog → Add a phone model, paste the mask PNG link(s), set price and stock, tick For sale.
 - **Test the whole flow** in Stripe and EasyPost test mode, then switch both to live keys.
 - **Refunds** are done in the Stripe dashboard; cancel the order in Admin too.
 

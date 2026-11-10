@@ -2,8 +2,8 @@
 // React components subscribe to changes and call the action methods.
 
 import {
-  Design, Geometry, ImageStore, Layer, TextLayer, StickerLayer,
-  dims, drawCase, drawDesign, layerSize, measureText, px, STICKERS, FontKey,
+  Design, ImageStore, Layer, TextLayer, StickerLayer, Template,
+  drawCase, drawDesign, layerSize, measureText, px, STICKERS, FontKey,
 } from "./render";
 
 type Listener = () => void;
@@ -12,7 +12,7 @@ export class Editor {
   design: Design = { bg: { kind: "pattern", id: "dusk" }, layers: [] };
   images: ImageStore = {};
   sel: number | null = null;
-  geometry: Geometry;
+  T: Template | null = null;
   finish: "solid" | "clear" = "solid";
   private uid = 1;
   private hist: string[] = [];
@@ -26,7 +26,9 @@ export class Editor {
   private ro: ResizeObserver | null = null;
   private cleanup: (() => void)[] = [];
 
-  constructor(geometry: Geometry) { this.geometry = geometry; }
+  /** Print layout size in pixels (the machine mask size). */
+  get W() { return this.T?.W ?? 900; }
+  get H() { return this.T?.H ?? 1800; }
 
   /* ---------- subscription ---------- */
   version = 0;
@@ -62,12 +64,12 @@ export class Editor {
 
   render() {
     const c = this.ctx; if (!c || !this.cv) return;
-    const { cw, ch, dpr } = this.view, g = this.geometry, { W, H } = dims(g), f = px(1.6);
+    const { cw, ch, dpr } = this.view, { W, H } = this;
     const css = getComputedStyle(this.cv);
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
     c.clearRect(0, 0, cw, ch);
     c.fillStyle = css.getPropertyValue("--bed").trim() || "#E6E3EA"; c.fillRect(0, 0, cw, ch);
-    const s = Math.min((cw - 48) / (W + 2 * f), (ch - 60) / (H + 2 * f));
+    const s = Math.min((cw - 48) / W, (ch - 60) / H);
     const ox = (cw - W * s) / 2, oy = (ch - H * s) / 2 - 6;
     Object.assign(this.view, { s, ox, oy });
     // 10 mm platen grid
@@ -76,8 +78,14 @@ export class Editor {
     for (let x = ox % step; x < cw; x += step) { c.moveTo(Math.round(x) + 0.5, 0); c.lineTo(Math.round(x) + 0.5, ch); }
     for (let y = oy % step; y < ch; y += step) { c.moveTo(0, Math.round(y) + 0.5); c.lineTo(cw, Math.round(y) + 0.5); }
     c.stroke();
+    if (!this.T) {
+      c.fillStyle = css.getPropertyValue("--muted").trim() || "#675F70";
+      c.font = "500 14px Inter, system-ui, sans-serif"; c.textAlign = "center";
+      c.fillText("Loading case outline…", cw / 2, ch / 2);
+      return;
+    }
     c.save(); c.translate(ox, oy); c.scale(s, s);
-    drawCase(c, g, this.finish, (cc, w, h) => drawDesign(cc, this.design, this.images, w, h), dpr);
+    drawCase(c, this.T, this.finish, (cc, w, h) => drawDesign(cc, this.design, this.images, w, h), dpr);
     const L = this.selected();
     if (L) this.drawSelection(c, L, s, css.getPropertyValue("--accent").trim() || "#C8106E");
     c.restore();
@@ -169,16 +177,19 @@ export class Editor {
   changed(commit = false) { this.render(); this.emit(); if (commit) this.commit(); }
   select(id: number | null) { this.sel = id; this.changed(); }
 
-  setGeometry(g: Geometry) {
-    const o = dims(this.geometry), n = dims(g);
-    this.design.layers.forEach((L) => { L.x *= n.W / o.W; L.y *= n.H / o.H; });
-    this.geometry = g; this.changed(true);
+  /** Switch to another phone/case mask, keeping the design in the same relative place. */
+  setTemplate(T: Template) {
+    if (this.T && (this.T.W !== T.W || this.T.H !== T.H)) {
+      const fx = T.W / this.T.W, fy = T.H / this.T.H, f = Math.min(fx, fy);
+      this.design.layers.forEach((L) => { L.x *= fx; L.y *= fy; L.s *= f; L.base *= f; });
+    }
+    this.T = T; this.changed(true);
   }
   setFinish(f: "solid" | "clear") { this.finish = f; this.changed(); }
   setBg(bg: Design["bg"]) { this.design.bg = bg; this.changed(true); }
 
   private add(L: Layer) { this.design.layers.push(L); this.sel = L.id; this.changed(true); }
-  coverScale(w: number, h: number) { const { W, H } = dims(this.geometry); return Math.max(W / w, H / h); }
+  coverScale(w: number, h: number) { const { W, H } = this; return Math.max(W / w, H / h); }
 
   addImage(file: File): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -186,7 +197,7 @@ export class Editor {
       const im = new Image();
       im.onload = () => {
         const id = "img" + this.uid++; this.images[id] = im;
-        const { W, H } = dims(this.geometry), s = this.coverScale(im.naturalWidth, im.naturalHeight);
+        const { W, H } = this, s = this.coverScale(im.naturalWidth, im.naturalHeight);
         this.add({ id: this.uid++, type: "image", imgId: id, x: W / 2, y: H / 2, s, base: s, rot: 0, flip: false });
         resolve();
       };
@@ -195,20 +206,20 @@ export class Editor {
     });
   }
   addText(text: string, font: FontKey, color: string) {
-    const { W, H } = dims(this.geometry);
+    const { W, H } = this;
     const L: TextLayer = { id: this.uid++, type: "text", text: text || "Your text", font, color, size: 150, w: 0, h: 0, x: W / 2, y: H * 0.6, s: 1, base: 1, rot: 0, flip: false };
     measureText(L); L.s = L.base = Math.min(1, (W * 0.85) / L.w); this.add(L);
   }
   addSticker(kind: string) {
-    const { W, H } = dims(this.geometry);
+    const { W, H } = this;
     const L: StickerLayer = { id: this.uid++, type: "sticker", kind, color: STICKERS[kind].color, x: W / 2, y: H * 0.45, s: 0.9, base: 0.9, rot: 0, flip: false };
     this.add(L);
   }
   remove() { this.design.layers = this.design.layers.filter((l) => l.id !== this.sel); this.sel = null; this.changed(true); }
-  center() { const L = this.selected(); if (!L) return; const { W, H } = dims(this.geometry); L.x = W / 2; L.y = H / 2; this.changed(true); }
+  center() { const L = this.selected(); if (!L) return; const { W, H } = this; L.x = W / 2; L.y = H / 2; this.changed(true); }
   fill() {
     const L = this.selected(); if (!L || L.type !== "image") return;
-    const im = this.images[L.imgId], { W, H } = dims(this.geometry);
+    const im = this.images[L.imgId], { W, H } = this;
     L.s = L.base = this.coverScale(im.naturalWidth, im.naturalHeight); L.rot = 0; L.x = W / 2; L.y = H / 2; this.changed(true);
   }
   reorder(dir: 1 | -1) {
@@ -220,7 +231,7 @@ export class Editor {
   remeasureText() { this.design.layers.forEach((L) => { if (L.type === "text") measureText(L); }); this.render(); this.emit(); }
 
   seedSample() {
-    const { W, H } = dims(this.geometry);
+    const { W, H } = this;
     const T: TextLayer = { id: this.uid++, type: "text", text: "Made by you", font: "script", color: "#FFFFFF", size: 150, w: 0, h: 0, x: W / 2, y: H * 0.66, s: 1, base: 1, rot: -0.08, flip: false };
     measureText(T); T.s = T.base = Math.min(1, (W * 0.82) / T.w);
     this.design = { bg: { kind: "pattern", id: "dusk" }, layers: [

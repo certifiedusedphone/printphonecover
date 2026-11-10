@@ -2,8 +2,8 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Editor } from "@/lib/design/editor";
 import {
-  COLORS, FONTS, PATTERNS, STICKERS, dims, renderPreview, renderPrintFile,
-  type Catalog, type FontKey,
+  COLORS, FONTS, PATTERNS, STICKERS, loadTemplate, renderPreview, renderPrintFile,
+  type Catalog, type FontKey, type Template,
 } from "@/lib/design/render";
 import { SHIPPING, money, type Address, type ShippingKey } from "@/lib/shipping";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -11,7 +11,6 @@ import { AddressFields } from "./AddressFields";
 import { CaseThumb, StickerThumb } from "./CaseThumb";
 import { Logo } from "./Logo";
 
-const plain = (c: CanvasRenderingContext2D, W: number, H: number) => { c.fillStyle = "#F2EFF4"; c.fillRect(0, 0, W, H); };
 const half = PATTERNS.halftone.draw;
 const heart = (c: CanvasRenderingContext2D, W: number, H: number) => { c.save(); c.translate(W / 2, H * 0.58); c.scale(W / 520, W / 520); STICKERS.heart.draw(c, "#E4007C"); c.restore(); };
 const TABS = [["photo", "Photo"], ["text", "Text"], ["bg", "Background"], ["designs", "Designs"], ["stickers", "Stickers"]] as const;
@@ -19,10 +18,12 @@ type Tab = (typeof TABS)[number][0];
 type AddrCheck = null | { kind: "suggest"; suggested: Address } | { kind: "bad"; message: string };
 
 export default function Studio({ catalog, cancelled }: { catalog: Catalog; cancelled?: boolean }) {
-  const firstBrand = catalog.brands.find((b) => b.active)?.id ?? catalog.brands[0]?.id;
-  const [brand, setBrand] = useState(firstBrand);
-  const [deviceId, setDeviceId] = useState(catalog.devices.find((d) => d.brand_id === firstBrand)?.id ?? catalog.devices[0]?.id);
-  const [productId, setProductId] = useState(catalog.products[0]?.id);
+  const firstBrand: string = catalog.brands.find((b) => b.active)?.id ?? catalog.brands[0]?.id ?? "";
+  const firstDevice: string = catalog.devices.find((d) => d.brand_id === firstBrand)?.id ?? catalog.devices[0]?.id ?? "";
+  const firstProduct: string = catalog.products.find((p) => catalog.variants.some((v) => v.device_id === firstDevice && v.product_id === p.id))?.id ?? catalog.products[0]?.id ?? "";
+  const [brand, setBrand] = useState<string>(firstBrand);
+  const [deviceId, setDeviceId] = useState<string>(firstDevice);
+  const [productId, setProductId] = useState<string>(firstProduct);
   const [step, setStep] = useState(1);
   const [tab, setTab] = useState<Tab>("photo");
   const [newText, setNewText] = useState("Made by you");
@@ -35,7 +36,7 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
   const variant = catalog.variants.find((v) => v.device_id === deviceId && v.product_id === productId);
 
   const edRef = useRef<Editor | null>(null);
-  if (!edRef.current && device) { edRef.current = new Editor(device.geometry); edRef.current.finish = product?.finish ?? "solid"; edRef.current.seedSample(); }
+  if (!edRef.current) { edRef.current = new Editor(); edRef.current.finish = product?.finish ?? "solid"; }
   const ed = edRef.current!;
   useSyncExternalStore(ed.subscribe, () => ed.version, () => 0);
 
@@ -49,7 +50,29 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
     return () => ed.detach();
   }, [ed]);
 
-  useEffect(() => { if (device) ed.setGeometry(device.geometry); }, [device, ed]);
+  // Load the machine's mask for the chosen phone + case.
+  const [T, setT] = useState<Template | null>(null);
+  const [tplError, setTplError] = useState("");
+  const seeded = useRef(false);
+  const maskUrl = variant?.mask ?? null;
+  useEffect(() => {
+    if (!maskUrl) return;
+    let live = true; setTplError("");
+    loadTemplate(maskUrl).then((t) => {
+      if (!live) return;
+      ed.setTemplate(t);
+      if (!seeded.current) { seeded.current = true; ed.seedSample(); ed.resetHistory(); }
+      setT(t);
+    }).catch((e: Error) => live && setTplError(e.message));
+    return () => { live = false; };
+  }, [maskUrl, ed]);
+
+  function chooseDevice(id: string) {
+    setDeviceId(id);
+    const has = (pid: string) => catalog.variants.some((v) => v.device_id === id && v.product_id === pid);
+    if (!has(productId)) { const first = catalog.products.find((p) => has(p.id)); if (first) setProductId(first.id); }
+    go(2);
+  }
   useEffect(() => { if (product) ed.setFinish(product.finish); }, [product, ed]);
 
   function go(n: number) { if (n !== 3) ed.select(null); setStep(n); }
@@ -85,13 +108,13 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
 
   async function placeOrder(addr: Address, verified: boolean) {
     setCheck(null); setError("");
-    if (!variant) { setError("This case isn't available for that phone."); return; }
+    if (!variant || !T) { setError("This case isn't available for that phone."); return; }
     try {
       setBusy("Preparing your print file…");
       ed.select(null);
       const [print, preview] = await Promise.all([
-        renderPrintFile(device.geometry, ed.design, ed.images),
-        renderPreview(device.geometry, product.finish, ed.design, ed.images),
+        renderPrintFile(T, ed.design, ed.images),
+        renderPreview(T, product.finish, ed.design, ed.images),
       ]);
       setBusy("Saving your order…");
       const created = await fetch("/api/orders", {
@@ -119,9 +142,19 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
   const L = step === 3 ? ed.selected() : null;
   const pct = L ? Math.round((L.s / L.base) * 100) : 100;
   const deg = L ? Math.round((((L.rot * 180) / Math.PI + 540) % 360) - 180) : 0;
-  const { W, H } = dims(device.geometry);
+  const W = T?.W ?? 0, H = T?.H ?? 0;
+  const mm = (p: number) => Math.round((p / 300) * 25.4);
 
-  const brandDevices = useMemo(() => catalog.devices.filter((d) => d.brand_id === brand), [catalog.devices, brand]);
+  const seriesGroups = useMemo(() => {
+    const groups: { series: string; devices: typeof catalog.devices }[] = [];
+    catalog.devices.filter((d) => d.brand_id === brand).forEach((d) => {
+      const key = d.series || "";
+      let g = groups.find((x) => x.series === key);
+      if (!g) { g = { series: key, devices: [] }; groups.push(g); }
+      g.devices.push(d);
+    });
+    return groups;
+  }, [catalog.devices, brand]);
 
   return (
     <>
@@ -153,7 +186,7 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
           <div className="stagebar">
             <button className="icon-btn" disabled={!ed.canUndo} onClick={() => ed.undo()}>Undo</button>
             <button className="icon-btn" disabled={!ed.canRedo} onClick={() => ed.redo()}>Redo</button>
-            <span className="specs">Print area {device.geometry.w} × {device.geometry.h} mm · {W} × {H} px</span>
+            <span className="specs">{T ? `Print layout ${W} × ${H} px · ${mm(W)} × ${mm(H)} mm` : tplError || "Loading case outline…"}</span>
           </div>
         </section>
 
@@ -175,14 +208,16 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
                   </button>
                 ))}
               </div>
-              <div className="grid3">
-                {brandDevices.map((d) => (
-                  <button key={d.id} className="card" aria-pressed={d.id === deviceId} onClick={() => { setDeviceId(d.id); go(2); }}>
-                    <CaseThumb geometry={d.geometry} finish="solid" content={plain} width={64} height={110} />
-                    {d.name}
-                  </button>
-                ))}
-              </div>
+              {seriesGroups.map((g) => (
+                <div key={g.series} className="pane" style={{ gap: 8 }}>
+                  {seriesGroups.length > 1 && <span className="eyebrow" style={{ color: "var(--muted)" }}>{g.series}</span>}
+                  <div className="models">
+                    {g.devices.map((d) => (
+                      <button key={d.id} className="model" aria-pressed={d.id === deviceId} onClick={() => chooseDevice(d.id)}>{d.name}</button>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 
@@ -191,14 +226,15 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
               <div className="pane-head"><span className="eyebrow">Step 2</span><h2>Choose your case</h2><p>Cases available for {device.name}.</p></div>
               {catalog.products.map((p) => {
                 const v = catalog.variants.find((x) => x.device_id === deviceId && x.product_id === p.id);
-                const out = !v || v.stock <= 0;
+                if (!v) return null;
+                const out = v.stock <= 0;
                 return (
                   <button key={p.id} className="case" disabled={out} aria-pressed={p.id === productId} onClick={() => { setProductId(p.id); go(3); }}>
-                    <CaseThumb geometry={device.geometry} finish={p.finish} content={p.finish === "solid" ? half : heart} width={76} height={130} />
+                    <CaseThumb mask={v.mask} finish={p.finish} content={p.finish === "solid" ? half : heart} width={76} height={130} />
                     <div>
                       <h3>{p.name}<span className="code">{p.code}</span></h3>
                       <p>{p.description}</p>
-                      <span className="price">{v ? money(v.price_cents) : "—"}</span>{out && <span className="note"> · Out of stock</span>}
+                      <span className="price">{money(v.price_cents)}</span>{out && <span className="note"> · Out of stock</span>}
                     </div>
                   </button>
                 );
@@ -294,7 +330,7 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
                 <div className="thumbs">
                   {Object.entries(PATTERNS).map(([id, P]) => (
                     <button key={id} className="thumb" aria-pressed={ed.design.bg.kind === "pattern" && ed.design.bg.id === id} onClick={() => ed.setBg({ kind: "pattern", id })}>
-                      <CaseThumb geometry={device.geometry} finish={product.finish} content={P.draw} width={56} height={96} />{P.name}
+                      <CaseThumb template={T} finish={product.finish} content={P.draw} width={56} height={96} />{P.name}
                     </button>
                   ))}
                 </div>

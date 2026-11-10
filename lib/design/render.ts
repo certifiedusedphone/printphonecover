@@ -4,13 +4,9 @@
 export const DPI = 300;
 export const px = (mm: number) => (mm / 25.4) * DPI;
 
-export type Geometry = {
-  w: number; h: number; r: number;
-  cam: { x: number; y: number; w: number; h: number; r: number; lenses: [number, number, number][]; flash?: [number, number, number] | null };
-};
-export type Device = { id: string; brand_id: string; name: string; geometry: Geometry };
+export type Device = { id: string; brand_id: string; name: string; series: string | null };
 export type Product = { id: string; code: string; name: string; description: string; finish: "solid" | "clear" };
-export type Variant = { id: string; device_id: string; product_id: string; price_cents: number; stock: number };
+export type Variant = { id: string; device_id: string; product_id: string; price_cents: number; stock: number; mask: string | null };
 export type Brand = { id: string; name: string; active: boolean };
 export type Catalog = { brands: Brand[]; devices: Device[]; products: Product[]; variants: Variant[] };
 
@@ -23,8 +19,6 @@ export type Layer = ImageLayer | TextLayer | StickerLayer;
 export type Design = { bg: Background; layers: Layer[] };
 
 type Ctx = CanvasRenderingContext2D;
-
-export const dims = (g: Geometry) => ({ W: Math.round(px(g.w)), H: Math.round(px(g.h)) });
 
 export const COLORS = ["#FFFFFF", "#17141C", "#E4007C", "#00A0E9", "#FFD400", "#FF6A13", "#2BB673", "#7B3FE4", "#F6B8CF", "#BFE3F2"];
 
@@ -45,21 +39,6 @@ export function measureText(L: TextLayer) {
   const m = mctx.measureText(L.text || " ");
   L.w = Math.max(60, m.width + 24);
   L.h = L.size * 1.35;
-}
-
-export function rr(c: Ctx, x: number, y: number, w: number, h: number, r: number) {
-  r = Math.min(r, w / 2, h / 2);
-  c.moveTo(x + r, y); c.lineTo(x + w - r, y); c.arcTo(x + w, y, x + w, y + r, r);
-  c.lineTo(x + w, y + h - r); c.arcTo(x + w, y + h, x + w - r, y + h, r);
-  c.lineTo(x + r, y + h); c.arcTo(x, y + h, x, y + h - r, r);
-  c.lineTo(x, y + r); c.arcTo(x, y, x + r, y, r); c.closePath();
-}
-
-export function printPath(c: Ctx, g: Geometry) {
-  const { W, H } = dims(g), k = g.cam;
-  c.beginPath();
-  rr(c, 0, 0, W, H, px(g.r));
-  rr(c, px(k.x), px(k.y), px(k.w), px(k.h), px(k.r));
 }
 
 /* ---------- Original background designs ---------- */
@@ -121,61 +100,106 @@ export function drawDesign(c: Ctx, d: Design, images: ImageStore, W: number, H: 
   d.layers.forEach((L) => drawLayer(c, L, images));
 }
 
-export function drawCamera(c: Ctx, g: Geometry, finish: "solid" | "clear") {
-  const k = g.cam;
-  c.beginPath(); rr(c, px(k.x - 1), px(k.y - 1), px(k.w + 2), px(k.h + 2), px(k.r + 1));
-  c.fillStyle = finish === "solid" ? "#1C1B20" : "rgba(220,228,236,.7)"; c.fill();
-  c.beginPath(); rr(c, px(k.x), px(k.y), px(k.w), px(k.h), px(k.r));
-  const g2 = c.createLinearGradient(px(k.x), px(k.y), px(k.x + k.w), px(k.y + k.h));
-  g2.addColorStop(0, "#4A4850"); g2.addColorStop(1, "#2E2C33"); c.fillStyle = g2; c.fill();
-  k.lenses.forEach(([lx, ly, lr]) => {
-    const x = px(k.x + lx), y = px(k.y + ly), r = px(lr);
-    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fillStyle = "#1A1A1F"; c.fill();
-    c.beginPath(); c.arc(x, y, r * 0.78, 0, Math.PI * 2); c.fillStyle = "#3D3C44"; c.fill();
-    const lg = c.createRadialGradient(x - r * 0.2, y - r * 0.2, r * 0.05, x, y, r * 0.6);
-    lg.addColorStop(0, "#3B5A8C"); lg.addColorStop(1, "#07080D");
-    c.beginPath(); c.arc(x, y, r * 0.6, 0, Math.PI * 2); c.fillStyle = lg; c.fill();
-    c.beginPath(); c.arc(x - r * 0.22, y - r * 0.22, r * 0.1, 0, Math.PI * 2); c.fillStyle = "rgba(255,255,255,.55)"; c.fill();
-  });
-  if (k.flash) { const [fx, fy, fr] = k.flash; c.beginPath(); c.arc(px(k.x + fx), px(k.y + fy), px(fr), 0, Math.PI * 2); c.fillStyle = "#EFE7D2"; c.fill(); }
+/* ---------- Machine masks ----------
+ * Each case uses the vending machine's own mask image (same pixel size as its print layout):
+ *  - opaque pixels = camera, frame and edges drawn on top of the design
+ *  - transparent pixels = where the design prints
+ *  - white pixels touching the image edge = outside the case
+ */
+export type Template = {
+  url: string; W: number; H: number;
+  overlay: HTMLCanvasElement;   // mask with the outside made transparent
+  inside: HTMLCanvasElement;    // opaque where the case is
+  printable: HTMLCanvasElement; // opaque where ink goes
+};
+
+const cache = new Map<string, Promise<Template>>();
+
+export function loadTemplate(url: string): Promise<Template> {
+  let p = cache.get(url);
+  if (!p) {
+    p = new Promise<Template>((resolve, reject) => {
+      const im = new Image();
+      im.crossOrigin = "anonymous";
+      im.onload = () => { try { resolve(buildTemplate(url, im)); } catch (e) { reject(e); } };
+      im.onerror = () => reject(new Error("Could not load the case outline. Check your connection and try again."));
+      im.src = url;
+    });
+    p.catch(() => cache.delete(url));
+    cache.set(url, p);
+  }
+  return p;
 }
 
-/** Realistic case mock-up: body, printed surface, gloss, camera ring. */
-export function drawCase(c: Ctx, g: Geometry, finish: "solid" | "clear", content: (c: Ctx, W: number, H: number) => void, shadow = 0) {
-  const { W, H } = dims(g), f = px(1.6);
+const canvas = (W: number, H: number) => { const c = document.createElement("canvas"); c.width = W; c.height = H; return c; };
+
+function buildTemplate(url: string, im: HTMLImageElement): Template {
+  const W = im.naturalWidth, H = im.naturalHeight, N = W * H;
+  const src = canvas(W, H), sx = src.getContext("2d", { willReadFrequently: true })!;
+  sx.drawImage(im, 0, 0);
+  const img = sx.getImageData(0, 0, W, H), d = img.data;
+
+  // Flood-fill the white area that touches the image edge: that is outside the case.
+  const out = new Uint8Array(N), stack = new Int32Array(N); let sp = 0;
+  const white = (i: number) => d[i * 4 + 3] > 150 && d[i * 4] > 225 && d[i * 4 + 1] > 225 && d[i * 4 + 2] > 225;
+  const push = (i: number) => { if (!out[i] && white(i)) { out[i] = 1; stack[sp++] = i; } };
+  for (let x = 0; x < W; x++) { push(x); push((H - 1) * W + x); }
+  for (let y = 0; y < H; y++) { push(y * W); push(y * W + W - 1); }
+  while (sp) {
+    const i = stack[--sp], x = i % W;
+    if (x > 0) push(i - 1); if (x < W - 1) push(i + 1);
+    if (i >= W) push(i - W); if (i < N - W) push(i + W);
+  }
+
+  const ov = new ImageData(new Uint8ClampedArray(d), W, H);
+  const ins = new ImageData(W, H), pr = new ImageData(W, H);
+  for (let i = 0; i < N; i++) {
+    const j = i * 4;
+    if (out[i]) { ov.data[j + 3] = 0; continue; }
+    ins.data[j + 3] = 255;
+    if (d[j + 3] < 128) pr.data[j + 3] = 255;
+  }
+  const put = (data: ImageData) => { const c = canvas(W, H); c.getContext("2d")!.putImageData(data, 0, 0); return c; };
+  return { url, W, H, overlay: put(ov), inside: put(ins), printable: put(pr) };
+}
+
+let work: HTMLCanvasElement | null = null;
+function workCanvas(W: number, H: number) {
+  if (!work) work = canvas(W, H);
+  if (work.width !== W || work.height !== H) { work.width = W; work.height = H; }
+  return work;
+}
+
+/** Realistic case mock-up in template pixels: case base, design, then the machine overlay. */
+export function drawCase(c: Ctx, T: Template, finish: "solid" | "clear", content: (c: Ctx, W: number, H: number) => void, shadow = 0) {
+  const w = workCanvas(T.W, T.H), x = w.getContext("2d")!;
+  x.globalCompositeOperation = "source-over";
+  x.clearRect(0, 0, T.W, T.H);
+  x.fillStyle = finish === "solid" ? "#FFFFFF" : "rgba(226,231,237,0.8)";
+  x.fillRect(0, 0, T.W, T.H);
+  x.save(); content(x, T.W, T.H); x.restore();
+  x.globalCompositeOperation = "destination-in"; x.drawImage(T.inside, 0, 0);
+  x.globalCompositeOperation = "source-over"; x.drawImage(T.overlay, 0, 0);
   c.save();
-  if (shadow) { c.shadowColor = "rgba(12,6,24,.32)"; c.shadowBlur = shadow * 30; c.shadowOffsetY = shadow * 12; }
-  c.beginPath(); rr(c, -f, -f, W + 2 * f, H + 2 * f, px(g.r) + f);
-  c.fillStyle = finish === "solid" ? "#1C1B20" : "rgba(214,222,230,.6)"; c.fill();
+  if (shadow) { c.shadowColor = "rgba(12,6,24,.30)"; c.shadowBlur = shadow * 30; c.shadowOffsetY = shadow * 12; }
+  c.drawImage(w, 0, 0);
   c.restore();
-  if (finish === "clear") { c.lineWidth = f * 0.4; c.strokeStyle = "rgba(255,255,255,.85)"; c.stroke(); }
-  c.save(); printPath(c, g); c.clip("evenodd");
-  if (finish === "solid") { c.fillStyle = "#FFFFFF"; c.fillRect(0, 0, W, H); }
-  else { const gr = c.createLinearGradient(0, 0, W, H); gr.addColorStop(0, "#D2CCC2"); gr.addColorStop(1, "#A7A196"); c.fillStyle = gr; c.fillRect(0, 0, W, H); }
-  content(c, W, H);
-  const gl = c.createLinearGradient(0, 0, W * 0.7, H * 0.45);
-  gl.addColorStop(0, "rgba(255,255,255,.22)"); gl.addColorStop(0.5, "rgba(255,255,255,.04)"); gl.addColorStop(1, "rgba(255,255,255,0)");
-  c.fillStyle = gl; c.fillRect(0, 0, W, H);
-  c.restore();
-  drawCamera(c, g, finish);
 }
 
-/** Print-ready PNG: exact print area at 300 dpi, camera cutout transparent. */
-export function renderPrintFile(g: Geometry, d: Design, images: ImageStore): Promise<Blob> {
-  const { W, H } = dims(g);
-  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
-  const c = cv.getContext("2d")!;
-  c.save(); printPath(c, g); c.clip("evenodd"); drawDesign(c, d, images, W, H); c.restore();
+/** Print-ready PNG at the machine's layout size; ink only where the mask is open. */
+export function renderPrintFile(T: Template, d: Design, images: ImageStore): Promise<Blob> {
+  const cv = canvas(T.W, T.H), c = cv.getContext("2d")!;
+  drawDesign(c, d, images, T.W, T.H);
+  c.globalCompositeOperation = "destination-in"; c.drawImage(T.printable, 0, 0);
   return new Promise((res, rej) => cv.toBlob((b) => (b ? res(b) : rej(new Error("Could not create print file"))), "image/png"));
 }
 
-/** Small mock-up JPG for the admin list and emails. */
-export function renderPreview(g: Geometry, finish: "solid" | "clear", d: Design, images: ImageStore): Promise<Blob> {
-  const { W, H } = dims(g), f = px(1.6), scale = 600 / (H + 2 * f);
-  const cv = document.createElement("canvas"); cv.width = Math.round((W + 2 * f) * scale) + 20; cv.height = 620;
-  const c = cv.getContext("2d")!;
+/** Small mock-up JPG for the admin list and the customer's order page. */
+export function renderPreview(T: Template, finish: "solid" | "clear", d: Design, images: ImageStore): Promise<Blob> {
+  const scale = 600 / T.H;
+  const cv = canvas(Math.round(T.W * scale) + 20, 620), c = cv.getContext("2d")!;
   c.fillStyle = "#FFFFFF"; c.fillRect(0, 0, cv.width, cv.height);
-  c.translate(10 + f * scale, 10 + f * scale); c.scale(scale, scale);
-  drawCase(c, g, finish, (cc, w, h) => drawDesign(cc, d, images, w, h));
+  c.translate(10, 10); c.scale(scale, scale);
+  drawCase(c, T, finish, (cc, w, h) => drawDesign(cc, d, images, w, h));
   return new Promise((res, rej) => cv.toBlob((b) => (b ? res(b) : rej(new Error("Could not create preview"))), "image/jpeg", 0.88));
 }
