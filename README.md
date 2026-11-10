@@ -54,8 +54,7 @@ Statuses: Pending → Paid → Printing → Shipped → Delivered (plus Cancelle
    - Project name: `printphonecover` (must match `name` in `wrangler.jsonc`)
    - Build command: `npx opennextjs-cloudflare build`
    - Deploy command: `npx opennextjs-cloudflare deploy`
-3. Worker → **Settings → Build → Variables and secrets**: add the three public values the build needs:
-   `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+3. The public values (`NEXT_PUBLIC_*`) are already in `.env.production`, so the build needs nothing extra.
 4. Worker → **Settings → Variables and Secrets** (runtime): add every variable from `.env.example`. Use **Secret** type for keys and passwords.
 5. Worker → **Settings → Domains & Routes** → add `printphonecover.com` and `www.printphonecover.com` (the domain must be on Cloudflare DNS).
 6. Every push to the `main` branch deploys automatically. Open `/admin` and sign in with `ADMIN_PASSWORD`.
