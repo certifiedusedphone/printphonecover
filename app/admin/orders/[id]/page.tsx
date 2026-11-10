@@ -8,7 +8,8 @@ import { requireAdminPage } from "@/lib/server/require-admin";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminOrder({ params }: { params: { id: string } }) {
+export default async function AdminOrder(props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   await requireAdminPage();
   const { data: o } = await db().from("orders").select("*").eq("id", params.id).maybeSingle();
   if (!o) notFound();

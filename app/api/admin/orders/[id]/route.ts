@@ -13,7 +13,8 @@ type Action =
   | { action: "cancel" }
   | { action: "reopen" };
 
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const denied = await adminDenied(); if (denied) return denied;
   const body = (await req.json()) as Action;
   const { data: o } = await db().from("orders").select("*").eq("id", params.id).single();

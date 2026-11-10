@@ -9,7 +9,8 @@ export const metadata = { title: "Your order – PrintPhoneCover" };
 
 const FLOW: OrderStatus[] = ["pending", "paid", "printing", "shipped", "delivered"];
 
-export default async function OrderPage({ params, searchParams }: { params: { id: string }; searchParams: { t?: string; paid?: string } }) {
+export default async function OrderPage(props: { params: Promise<{ id: string }>; searchParams: Promise<{ t?: string; paid?: string }> }) {
+  const [params, searchParams] = await Promise.all([props.params, props.searchParams]);
   const { data: o } = await db().from("orders").select("*").eq("id", params.id).maybeSingle();
   if (!o || o.token !== searchParams.t) notFound();
   const preview = await signedUrl(o.preview_path);

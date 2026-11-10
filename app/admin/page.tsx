@@ -7,7 +7,8 @@ import { requireAdminPage } from "@/lib/server/require-admin";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Orders – PrintPhoneCover Admin" };
 
-export default async function AdminOrders({ searchParams }: { searchParams: { status?: string } }) {
+export default async function AdminOrders(props: { searchParams: Promise<{ status?: string }> }) {
+  const searchParams = await props.searchParams;
   await requireAdminPage();
   const status = (STATUSES as readonly string[]).includes(searchParams.status ?? "") ? (searchParams.status as OrderStatus) : "paid";
   const s = db();

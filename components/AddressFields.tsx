@@ -15,7 +15,7 @@ export function AddressFields({ value, onChange }: { value: Address; onChange: (
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const session = useRef(newSession());
-  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const skipNext = useRef(false);
 
   const set = (patch: Partial<Address>) => onChange({ ...value, ...patch });

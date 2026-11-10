@@ -6,7 +6,7 @@ import { ADMIN_COOKIE, isAdminCookie } from "@/lib/admin-auth";
 
 // Second check on every admin page and API route, in addition to middleware.
 export async function isAdmin() {
-  return isAdminCookie(cookies().get(ADMIN_COOKIE)?.value);
+  return isAdminCookie((await cookies()).get(ADMIN_COOKIE)?.value);
 }
 export async function requireAdminPage() {
   if (!(await isAdmin())) redirect("/admin/login");

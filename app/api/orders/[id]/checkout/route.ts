@@ -4,7 +4,8 @@ import { stripe } from "@/lib/server/stripe";
 import { SHIPPING, type ShippingKey } from "@/lib/shipping";
 
 // Step 2 of checkout: files are uploaded, so open a Stripe Checkout session.
-export async function POST(req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const { token } = (await req.json()) as { token: string };
   const s = db();
   const { data: o } = await s.from("orders").select("*").eq("id", params.id).single();
