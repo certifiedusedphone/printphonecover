@@ -57,7 +57,8 @@ export default async function AdminOrder(props: { params: Promise<{ id: string }
                 <dt>Ship to</dt><dd>{o.ship_name}<br />{o.ship_line1}{o.ship_line2 ? `, ${o.ship_line2}` : ""}<br />{o.ship_city}, {o.ship_state} {o.ship_zip}
                   <br /><span className={o.address_verified ? "okmsg" : "warn"} style={{ display: "inline-block", marginTop: 6 }}>{o.address_verified ? "USPS-verified address" : "Address not verified by USPS — double-check before shipping"}</span></dd>
                 </>)}
-                <dt>Email</dt><dd>{o.email}</dd>
+                {o.channel && o.channel !== "web" && (<><dt>{o.channel === "amazon" ? "Amazon" : "TikTok"}</dt><dd><b>{o.channel_order_id}</b><br /><span className="note">Enter tracking in {o.channel === "amazon" ? "Amazon Seller Central" : "TikTok Seller Center"} after shipping. Don&apos;t email this buyer directly.</span></dd></>)}
+                {o.email && (<><dt>Email</dt><dd>{o.email}</dd></>)}
                 {o.phone && (<><dt>Phone</dt><dd>{o.phone}</dd></>)}
                 <dt>Delivery</dt><dd>{o.fulfillment === "pickup" ? "Pickup (free)" : SHIPPING[o.shipping_method as ShippingKey]?.label ?? o.shipping_method}</dd>
                 <dt>Paid</dt><dd>{money(o.subtotal_cents)} case + {money(o.shipping_cents)} shipping + {money(o.tax_cents)} tax = <b>{money(o.total_cents)}</b></dd>

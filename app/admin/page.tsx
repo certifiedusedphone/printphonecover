@@ -19,7 +19,7 @@ export default async function AdminOrders(props: { searchParams: Promise<{ statu
   }));
 
   // Paid / Printing are sorted by phone model so staff can batch-print the same model together.
-  let q = s.from("orders").select("id,number,status,created_at,email,ship_name,ship_city,ship_state,device_name,product_name,total_cents,address_verified,preview_path,tracking_code,fulfillment,pickup_location_name").eq("status", status);
+  let q = s.from("orders").select("id,number,status,created_at,email,ship_name,ship_city,ship_state,device_name,product_name,total_cents,address_verified,preview_path,tracking_code,fulfillment,pickup_location_name,channel,channel_order_id").eq("status", status);
   q = status === "paid" || status === "printing"
     ? q.order("device_name").order("product_name").order("created_at")
     : q.order("created_at", { ascending: false });
@@ -46,7 +46,7 @@ export default async function AdminOrders(props: { searchParams: Promise<{ statu
                   {rows.map((o) => (
                     <tr key={o.id}>
                       <td>{o.preview && <img src={o.preview} alt="" />}</td>
-                      <td><Link href={`/admin/orders/${o.id}`}><b>{o.number}</b></Link><br /><span className={`status ${o.status}`}>{STATUS_LABEL[o.status as OrderStatus]}</span></td>
+                      <td><Link href={`/admin/orders/${o.id}`}><b>{o.number}</b></Link>{o.channel && o.channel !== "web" && <> <span className="chip"><b>{o.channel === "amazon" ? "Amazon" : "TikTok"}</b></span></>}<br /><span className={`status ${o.status}`}>{STATUS_LABEL[o.status as OrderStatus]}</span></td>
                       <td>{o.device_name}<br /><span className="note">{o.product_name}</span></td>
                       <td>{o.ship_name}<br /><span className="note">{o.fulfillment === "pickup" ? <b>Pickup · {o.pickup_location_name}</b> : <>{o.ship_city}, {o.ship_state}{!o.address_verified && " · address not USPS-verified"}</>}</span></td>
                       <td>{new Date(o.created_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</td>

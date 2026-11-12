@@ -8,6 +8,7 @@ import { adminDenied } from "@/lib/server/require-admin";
 type Action =
   | { action: "printing" }
   | { action: "ready_pickup" }
+  | { action: "confirm_marketplace" }
   | { action: "buy_label" }
   | { action: "manual_ship"; tracking_code: string }
   | { action: "delivered" }
@@ -27,6 +28,14 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
         if (o.status !== "paid") throw new Error("Only paid orders can move to Printing.");
         await setStatus(o.id, "printing", {}, "Sent to machine");
         break;
+      case "confirm_marketplace": {
+        if (!o.channel || o.channel === "web" || o.status !== "pending") throw new Error("Only new marketplace orders can be confirmed.");
+        const { data: files } = await db().storage.from("orders").list(o.id);
+        if (!files?.some((f) => f.name === "print.png")) throw new Error("The print file didn't upload. Try again.");
+        await setStatus(o.id, "paid", {}, `${o.channel === "amazon" ? "Amazon" : "TikTok"} order ${o.channel_order_id} entered by admin`);
+        if (o.variant_id) await db().rpc("decrement_stock", { v_id: o.variant_id });
+        break;
+      }
       case "ready_pickup":
         if (o.fulfillment !== "pickup") throw new Error("This order ships by mail.");
         if (o.status !== "printing" && o.status !== "paid") throw new Error("Print the case first.");

@@ -14,7 +14,9 @@ export async function setStatus(orderId: string, status: OrderStatus, extra: Rec
   const { data: order, error } = await db().from("orders").update(patch).eq("id", orderId).select("*").single();
   if (error) throw error;
   await db().from("order_events").insert({ order_id: orderId, status, note: note ?? null });
-  try {
+  // Amazon/TikTok buyers are contacted only through the marketplace, never by our emails.
+  const skipEmail = (order.channel && order.channel !== "web") || !order.email;
+  if (!skipEmail) try {
     if (status === "paid") await emails.paid(order);
     if (status === "shipped") await emails.shipped(order);
     if (status === "delivered") await emails.delivered(order);
