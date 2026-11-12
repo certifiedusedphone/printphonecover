@@ -68,6 +68,7 @@ Local development: `npm install`, copy `.env.example` to `.env.local`, `npm run 
 - **Phone models and masks.** `supabase/seed.sql` loads every model on the vending machine (60 models, M2 and M3 cases) with the machine's own mask images. Run it again any time; it keeps your prices and stock. Then open **Admin → Catalog → Copy masks to our storage** once.
 - **Test print** one order per case type on the machine to confirm the print file lines up.
 - **New machine models:** Admin → Catalog → Add a phone model, paste the mask PNG link(s), set price and stock, tick For sale.
+- **Machine locations:** run `supabase/locations.sql` once, then add each machine in **Admin → Locations**. They appear on `/locations` (sorted by distance from the customer) and as free pickup points at checkout. Pickup orders use **Mark ready for pickup** and **Mark picked up** instead of shipping labels.
 - **Test the whole flow** in Stripe and EasyPost test mode, then switch both to live keys.
 - **Refunds** are done in the Stripe dashboard; cancel the order in Admin too.
 

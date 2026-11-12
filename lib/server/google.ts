@@ -59,3 +59,18 @@ export async function placeAddress(placeId: string, sessionToken: string): Promi
     zip: get("postal_code"),
   };
 }
+
+/** Finds the map position of an address or ZIP code (Places API Text Search, same key). */
+export async function geocode(text: string): Promise<{ lat: number; lng: number } | null> {
+  if (!process.env.GOOGLE_MAPS_API_KEY) return null;
+  const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Goog-Api-Key": KEY(), "X-Goog-FieldMask": "places.location" },
+    body: JSON.stringify({ textQuery: text, regionCode: "us", pageSize: 1 }),
+    cache: "no-store",
+  });
+  if (!res.ok) { console.error("Geocode failed", res.status); return null; }
+  const j = await res.json();
+  const loc = j.places?.[0]?.location;
+  return loc ? { lat: loc.latitude, lng: loc.longitude } : null;
+}

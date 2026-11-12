@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export function OrderActions({ id, status, labelUrl }: { id: string; status: string; labelUrl: string | null }) {
+export function OrderActions({ id, status, labelUrl, pickup = false }: { id: string; status: string; labelUrl: string | null; pickup?: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
@@ -25,12 +25,14 @@ export function OrderActions({ id, status, labelUrl }: { id: string; status: str
       {err && <p className="error">{err}</p>}
       <div className="row">
         {status === "paid" && <button className="btn" disabled={!!busy} onClick={() => run("printing", {}, "Updating…")}>Mark as Printing</button>}
-        {(status === "printing" || status === "paid") && <button className="btn" disabled={!!busy} onClick={() => run("buy_label", {}, "Buying USPS label…")}>{busy || "Buy USPS label & mark Shipped"}</button>}
+        {(status === "printing" || status === "paid") && (pickup
+          ? <button className="btn" disabled={!!busy} onClick={() => run("ready_pickup", {}, "Updating…")}>Mark ready for pickup</button>
+          : <button className="btn" disabled={!!busy} onClick={() => run("buy_label", {}, "Buying USPS label…")}>{busy || "Buy USPS label & mark Shipped"}</button>)}
         {status === "printing" && <button className="btn-ghost" disabled={!!busy} onClick={() => run("reopen")}>Back to Paid (reprint)</button>}
-        {status === "shipped" && <button className="btn-ghost" disabled={!!busy} onClick={() => run("delivered")}>Mark Delivered</button>}
+        {status === "shipped" && <button className={pickup ? "btn" : "btn-ghost"} disabled={!!busy} onClick={() => run("delivered")}>{pickup ? "Mark picked up" : "Mark Delivered"}</button>}
         {labelUrl && <a className="btn-ghost" href={labelUrl} target="_blank" rel="noreferrer">Print shipping label</a>}
       </div>
-      {(status === "printing" || status === "paid") && (
+      {!pickup && (status === "printing" || status === "paid") && (
         manual ? (
           <div className="row">
             <div className="field" style={{ flex: 1 }}><label htmlFor="trk">USPS tracking number</label><input id="trk" value={code} onChange={(e) => setCode(e.target.value)} /></div>

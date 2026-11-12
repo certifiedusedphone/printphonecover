@@ -11,6 +11,8 @@ type Body = {
   address: Address;
   addressVerified: boolean;
   shipping: ShippingKey;
+  fulfillment?: "ship" | "pickup";
+  pickupLocationId?: string;
 };
 
 // Step 1 of checkout: create a pending order and hand back signed upload URLs
@@ -24,14 +26,26 @@ export async function POST(req: Request) {
 
 async function create(req: Request) {
   const b = (await req.json()) as Body;
-  const ship = SHIPPING[b.shipping];
-  const a = b.address;
+  const pickup = b.fulfillment === "pickup";
+  const ship = pickup ? { cents: 0 } : SHIPPING[b.shipping];
+  let a = b.address;
   if (!ship) return NextResponse.json({ error: "Choose a shipping option." }, { status: 400 });
   if (!b.email || !/^\S+@\S+\.\S+$/.test(b.email)) return NextResponse.json({ error: "Enter a valid email." }, { status: 400 });
-  if (!a?.name || !a.line1 || !a.city || !/^[A-Z]{2}$/.test(a.state) || !/^\d{5}(-\d{4})?$/.test(a.zip))
-    return NextResponse.json({ error: "Please check the shipping address." }, { status: 400 });
 
   const s = db();
+  let loc: { id: string; name: string; line1: string; line2: string | null; city: string; state: string; zip: string } | null = null;
+  if (pickup) {
+    if (!a?.name?.trim()) return NextResponse.json({ error: "Enter the name for pickup." }, { status: 400 });
+    if (!b.phone?.trim()) return NextResponse.json({ error: "Enter a phone number so we can reach you about pickup." }, { status: 400 });
+    const { data } = await s.from("locations").select("id,name,line1,line2,city,state,zip").eq("id", b.pickupLocationId ?? "").eq("active", true).eq("pickup", true).maybeSingle();
+    if (!data) return NextResponse.json({ error: "That pickup location isn't available. Please choose another." }, { status: 400 });
+    loc = data;
+    // The order's address fields hold the pickup location, so labels and lists show where it goes.
+    a = { name: a.name, line1: loc.line1, line2: loc.line2 ?? "", city: loc.city, state: loc.state, zip: loc.zip };
+  } else if (!a?.name || !a.line1 || !a.city || !/^[A-Z]{2}$/.test(a.state) || !/^\d{5}(-\d{4})?$/.test(a.zip)) {
+    return NextResponse.json({ error: "Please check the shipping address." }, { status: 400 });
+  }
+
   const { data: v, error } = await s
     .from("variants")
     .select("id,price_cents,stock,active,devices(name),products(name,code)")
@@ -47,7 +61,8 @@ async function create(req: Request) {
     email: b.email.trim().toLowerCase(), phone: b.phone?.trim() || null,
     ship_name: a.name.trim(), ship_line1: a.line1.trim(), ship_line2: a.line2?.trim() || null,
     ship_city: a.city.trim(), ship_state: a.state, ship_zip: a.zip,
-    address_verified: !!b.addressVerified, shipping_method: b.shipping,
+    address_verified: pickup ? true : !!b.addressVerified, shipping_method: pickup ? "pickup" : b.shipping,
+    fulfillment: pickup ? "pickup" : "ship", pickup_location_id: loc?.id ?? null, pickup_location_name: loc?.name ?? null,
     variant_id: v.id, device_name: device.name, product_name: `${product.code} ${product.name}`,
     subtotal_cents: v.price_cents, shipping_cents: ship.cents, total_cents: v.price_cents + ship.cents,
     design: b.design ?? null,

@@ -22,7 +22,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   }
 
   const site = process.env.NEXT_PUBLIC_SITE_URL || new URL(req.url).origin;
-  const ship = SHIPPING[o.shipping_method as ShippingKey];
+  const shipLabel = o.fulfillment === "pickup" ? `Pickup at ${o.pickup_location_name ?? "our store"}` : SHIPPING[o.shipping_method as ShippingKey]?.label ?? "Shipping";
   let session: Stripe.Checkout.Session;
   try {
     session = await stripe().checkout.sessions.create({
@@ -42,7 +42,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     }],
     shipping_options: [{
       shipping_rate_data: {
-        type: "fixed_amount", display_name: ship.label,
+        type: "fixed_amount", display_name: shipLabel,
         fixed_amount: { amount: o.shipping_cents, currency: "usd" }, tax_behavior: "exclusive",
       },
     }],

@@ -11,6 +11,8 @@ import { readJson } from "@/lib/fetch-json";
 import { AddressFields } from "./AddressFields";
 import { CaseThumb, StickerThumb } from "./CaseThumb";
 import { Logo } from "./Logo";
+import { LocationFinder } from "./LocationFinder";
+import type { Location } from "@/lib/locations";
 
 const half = PATTERNS.halftone.draw;
 const heart = (c: CanvasRenderingContext2D, W: number, H: number) => { c.save(); c.translate(W / 2, H * 0.58); c.scale(W / 520, W / 520); STICKERS.heart.draw(c, "#E4007C"); c.restore(); };
@@ -18,7 +20,7 @@ const TABS = [["photo", "Photo"], ["text", "Text"], ["bg", "Background"], ["desi
 type Tab = (typeof TABS)[number][0];
 type AddrCheck = null | { kind: "suggest"; suggested: Address } | { kind: "bad"; message: string };
 
-export default function Studio({ catalog, cancelled }: { catalog: Catalog; cancelled?: boolean }) {
+export default function Studio({ catalog, pickups = [], cancelled }: { catalog: Catalog; pickups?: Location[]; cancelled?: boolean }) {
   const firstBrand: string = catalog.brands.find((b) => b.active)?.id ?? catalog.brands[0]?.id ?? "";
   const firstDevice: string = catalog.devices.find((d) => d.brand_id === firstBrand)?.id ?? catalog.devices[0]?.id ?? "";
   const firstProduct: string = catalog.products.find((p) => catalog.variants.some((v) => v.device_id === firstDevice && v.product_id === p.id))?.id ?? catalog.products[0]?.id ?? "";
@@ -92,12 +94,19 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
   const [error, setError] = useState("");
   const [check, setCheck] = useState<AddrCheck>(null);
   const formRef = useRef<HTMLFormElement>(null);
-  const total = (variant?.price_cents ?? 0) + SHIPPING[ship].cents;
+  const [fulfillment, setFulfillment] = useState<"ship" | "pickup">("ship");
+  const [pickup, setPickup] = useState<Location | null>(null);
+  const shipCents = fulfillment === "pickup" ? 0 : SHIPPING[ship].cents;
+  const total = (variant?.price_cents ?? 0) + shipCents;
   const lowDpi = ed.lowestPhotoDpi();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setError(""); setCheck(null);
     if (!formRef.current?.checkValidity()) { formRef.current?.reportValidity(); return; }
+    if (fulfillment === "pickup") {
+      if (!pickup) { setError("Choose where you'll pick up your case."); return; }
+      await placeOrder(address, false); return;
+    }
     setBusy("Checking your address with USPS…");
     try {
       const r = await fetch("/api/address/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(address) }).then((x) => readJson<{ ok: boolean; message?: string; changed?: boolean; skipped?: boolean; address: Address }>(x));
@@ -121,7 +130,7 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
       setBusy("Saving your order…");
       const created = await fetch("/api/orders", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ variantId: variant.id, design: ed.design, email, phone, address: addr, addressVerified: verified, shipping: ship }),
+        body: JSON.stringify({ variantId: variant.id, design: ed.design, email, phone, address: addr, addressVerified: verified, shipping: ship, fulfillment, pickupLocationId: pickup?.id }),
       }).then(async (x) => ({ ok: x.ok, j: await readJson<{ orderId: string; token: string; uploads: { print: { path: string; token: string }; preview: { path: string; token: string } } }>(x) }));
       if (!created.ok) throw new Error(created.j.error || "Could not create the order.");
       const { orderId, token, uploads } = created.j;
@@ -175,8 +184,8 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
         </div>
       </header>
 
-      <main className="wrap layout">
-        <section className="stage" aria-label="Case preview">
+      <main className={`wrap layout${step < 3 ? " picker-mode" : ""}`}>
+        <section className="stage" aria-label="Case preview" hidden={step < 3}>
           <div className="bed" ref={bedRef}
             onDragOver={(e) => { e.preventDefault(); bedRef.current?.classList.add("drop"); }}
             onDragLeave={() => bedRef.current?.classList.remove("drop")}
@@ -202,7 +211,7 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
 
           {step === 1 && (
             <div className="pane">
-              <div className="pane-head"><span className="eyebrow">Step 1</span><h2>Choose your phone</h2><p>Pick the exact model so the camera cutout lines up.</p></div>
+              <div className="pane-head"><span className="eyebrow">Step 1</span><h2>Which phone do you have?</h2><p>Pick your exact model so the camera cutout lines up. Then choose a case and start designing.</p></div>
               <div className="brands">
                 {catalog.brands.map((b) => (
                   <button key={b.id} disabled={!b.active} aria-pressed={b.id === brand} onClick={() => setBrand(b.id)}>
@@ -355,15 +364,33 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
 
           {step === 4 && (
             <div className="pane">
-              <div className="pane-head"><span className="eyebrow">Step 4</span><h2>Shipping and payment</h2><p>We print your case and ship it anywhere in the United States.</p></div>
+              <div className="pane-head"><span className="eyebrow">Step 4</span><h2>{fulfillment === "pickup" ? "Pickup and payment" : "Shipping and payment"}</h2>
+                <p>{fulfillment === "pickup" ? "We print your case and have it waiting at the machine location you choose." : "We print your case and ship it anywhere in the United States."}</p></div>
               <form className="checkout" ref={formRef} noValidate onSubmit={submit}>
+                {pickups.length > 0 && (
+                  <div className="seg" role="group" aria-label="How do you want your case?">
+                    <button type="button" aria-pressed={fulfillment === "ship"} onClick={() => { setFulfillment("ship"); setError(""); }}>Ship to me</button>
+                    <button type="button" aria-pressed={fulfillment === "pickup"} onClick={() => { setFulfillment("pickup"); setCheck(null); setError(""); }}>Pick up · Free</button>
+                  </div>
+                )}
                 <div className="two">
                   <div className="field"><label htmlFor="email">Email for order updates</label>
                     <input id="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-                  <div className="field"><label htmlFor="phone">Phone (optional)</label>
-                    <input id="phone" type="tel" autoComplete="tel" value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
+                  <div className="field"><label htmlFor="phone">{fulfillment === "pickup" ? "Phone" : "Phone (optional)"}</label>
+                    <input id="phone" type="tel" autoComplete="tel" required={fulfillment === "pickup"} value={phone} onChange={(e) => setPhone(e.target.value)} /></div>
                 </div>
-                <AddressFields value={address} onChange={(a) => { setAddress(a); setCheck(null); }} />
+                {fulfillment === "pickup" ? (
+                  <>
+                    <div className="field"><label htmlFor="pname">Name for pickup</label>
+                      <input id="pname" required autoComplete="name" value={address.name} onChange={(e) => setAddress({ ...address, name: e.target.value })} /></div>
+                    <fieldset>
+                      <legend>Pick up at</legend>
+                      <LocationFinder locations={pickups} selectedId={pickup?.id} onSelect={(l) => { setPickup(l); setError(""); }} />
+                    </fieldset>
+                  </>
+                ) : (
+                  <AddressFields value={address} onChange={(a) => { setAddress(a); setCheck(null); }} />
+                )}
 
                 {check?.kind === "suggest" && (
                   <div className="addr-check">
@@ -386,16 +413,16 @@ export default function Studio({ catalog, cancelled }: { catalog: Catalog; cance
                   </div>
                 )}
 
-                <fieldset>
+                {fulfillment === "ship" && <fieldset>
                   <legend>Shipping</legend>
                   {(Object.keys(SHIPPING) as ShippingKey[]).map((k) => (
                     <label key={k} className="ship"><input type="radio" name="ship" checked={ship === k} onChange={() => setShip(k)} />
                       <span>{SHIPPING[k].label}<small>{SHIPPING[k].detail}</small></span><b>{money(SHIPPING[k].cents)}</b></label>
                   ))}
-                </fieldset>
+                </fieldset>}
                 <div className="totals">
                   <div><span>{product.name} for {device.name}</span><span>{money(variant?.price_cents ?? 0)}</span></div>
-                  <div><span>{SHIPPING[ship].label} shipping</span><span>{money(SHIPPING[ship].cents)}</span></div>
+                  <div><span>{fulfillment === "pickup" ? `Pickup${pickup ? ` at ${pickup.name}` : ""}` : `${SHIPPING[ship].label} shipping`}</span><span>{fulfillment === "pickup" ? "Free" : money(shipCents)}</span></div>
                   <div className="grand"><span>Total before tax</span><span>{money(total)}</span></div>
                 </div>
                 {error && <p className="error">{error}</p>}

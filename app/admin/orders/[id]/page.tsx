@@ -45,17 +45,21 @@ export default async function AdminOrder(props: { params: Promise<{ id: string }
           <div className="pane">
             <div className="box">
               <h2 style={{ fontSize: 18 }}>Next step</h2>
-              <OrderActions id={o.id} status={o.status} labelUrl={o.label_url} />
+              <OrderActions id={o.id} status={o.status} labelUrl={o.label_url} pickup={o.fulfillment === "pickup"} />
             </div>
             <div className="box">
               <dl className="specs-list">
                 <dt>Phone</dt><dd>{o.device_name}</dd>
                 <dt>Case</dt><dd>{o.product_name}</dd>
+                {o.fulfillment === "pickup" ? (<>
+                  <dt>Pickup</dt><dd><b>{o.pickup_location_name}</b><br />{o.ship_line1}{o.ship_line2 ? `, ${o.ship_line2}` : ""}, {o.ship_city}, {o.ship_state} {o.ship_zip}<br />Customer: {o.ship_name}</dd>
+                </>) : (<>
                 <dt>Ship to</dt><dd>{o.ship_name}<br />{o.ship_line1}{o.ship_line2 ? `, ${o.ship_line2}` : ""}<br />{o.ship_city}, {o.ship_state} {o.ship_zip}
                   <br /><span className={o.address_verified ? "okmsg" : "warn"} style={{ display: "inline-block", marginTop: 6 }}>{o.address_verified ? "USPS-verified address" : "Address not verified by USPS — double-check before shipping"}</span></dd>
+                </>)}
                 <dt>Email</dt><dd>{o.email}</dd>
                 {o.phone && (<><dt>Phone</dt><dd>{o.phone}</dd></>)}
-                <dt>Shipping</dt><dd>{SHIPPING[o.shipping_method as ShippingKey]?.label ?? o.shipping_method}</dd>
+                <dt>Delivery</dt><dd>{o.fulfillment === "pickup" ? "Pickup (free)" : SHIPPING[o.shipping_method as ShippingKey]?.label ?? o.shipping_method}</dd>
                 <dt>Paid</dt><dd>{money(o.subtotal_cents)} case + {money(o.shipping_cents)} shipping + {money(o.tax_cents)} tax = <b>{money(o.total_cents)}</b></dd>
                 {o.tracking_code && (<><dt>Tracking</dt><dd><a href={o.tracking_url ?? "#"} target="_blank" rel="noreferrer">USPS {o.tracking_code}</a></dd></>)}
                 {o.stripe_payment_intent && (<><dt>Stripe</dt><dd><a href={`https://dashboard.stripe.com/payments/${o.stripe_payment_intent}`} target="_blank" rel="noreferrer">{o.stripe_payment_intent}</a></dd></>)}

@@ -7,6 +7,7 @@ import { adminDenied } from "@/lib/server/require-admin";
 
 type Action =
   | { action: "printing" }
+  | { action: "ready_pickup" }
   | { action: "buy_label" }
   | { action: "manual_ship"; tracking_code: string }
   | { action: "delivered" }
@@ -26,7 +27,13 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
         if (o.status !== "paid") throw new Error("Only paid orders can move to Printing.");
         await setStatus(o.id, "printing", {}, "Sent to machine");
         break;
+      case "ready_pickup":
+        if (o.fulfillment !== "pickup") throw new Error("This order ships by mail.");
+        if (o.status !== "printing" && o.status !== "paid") throw new Error("Print the case first.");
+        await setStatus(o.id, "shipped", {}, `Ready for pickup at ${o.pickup_location_name ?? "store"}`);
+        break;
       case "buy_label": {
+        if (o.fulfillment === "pickup") throw new Error("This is a pickup order. Use Ready for pickup.");
         if (o.status !== "printing" && o.status !== "paid") throw new Error("Print the case before buying a label.");
         if (o.tracking_code) throw new Error("A label was already bought for this order.");
         const service = SHIPPING[o.shipping_method as ShippingKey]?.service ?? "GroundAdvantage";
@@ -49,8 +56,8 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
         break;
       }
       case "delivered":
-        if (o.status !== "shipped") throw new Error("Only shipped orders can be marked delivered.");
-        await setStatus(o.id, "delivered", {}, "Marked delivered by admin");
+        if (o.status !== "shipped") throw new Error("Only shipped or ready orders can be completed.");
+        await setStatus(o.id, "delivered", {}, o.fulfillment === "pickup" ? "Picked up by customer" : "Marked delivered by admin");
         break;
       case "cancel":
         if (o.status === "shipped" || o.status === "delivered") throw new Error("This order already shipped.");
