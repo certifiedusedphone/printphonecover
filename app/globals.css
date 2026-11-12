@@ -14,6 +14,7 @@
   --ok:#4FD08A; --ok-bg:#12291C; --warn:#F2B35A; --warn-bg:#2E2213; --bad:#FF8A80; --bad-bg:#3A1714; color-scheme:dark;}}
 
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{margin:0}
 body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.5}
 h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;line-height:1.15}
