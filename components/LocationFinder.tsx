@@ -68,7 +68,7 @@ export function LocationFinder({ locations, selectedId, onSelect }: { locations:
               {l.hours && <span className="note">{l.hours}</span>}
               {l.note && <span className="note">{l.note}</span>}
               <div className="row" style={{ gap: 10 }}>
-                {l.pickup && <span className="chip"><b>Pickup available</b></span>}
+                {/coming soon/i.test(l.note ?? "") ? <span className="chip"><b>Coming soon</b></span> : l.pickup && <span className="chip"><b>Pickup available</b></span>}
                 {l.phone && <span className="note">{l.phone}</span>}
                 <a href={directionsUrl(l)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>Directions</a>
               </div>

@@ -35,7 +35,7 @@ export async function POST(req: Request) {
       if (cur) addressChanged = fullAddress(cur) !== fullAddress(row);
     }
     let note = "";
-    if (row.lat == null || row.lng == null || (addressChanged && l.id)) {
+    if (process.env.GOOGLE_MAPS_API_KEY || row.lat == null || row.lng == null || (addressChanged && l.id)) {
       const p = await geocode(fullAddress(row));
       if (p) { row.lat = p.lat; row.lng = p.lng; }
       else if (row.lat == null) note = "Saved, but the map position wasn't found (add the Google key, or type latitude and longitude). Distance sorting skips this location.";

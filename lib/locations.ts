@@ -16,4 +16,4 @@ export const fullAddress = (l: Pick<Location, "line1" | "line2" | "city" | "stat
   `${l.line1}${l.line2 ? `, ${l.line2}` : ""}, ${l.city}, ${l.state} ${l.zip}`;
 
 export const directionsUrl = (l: Location) =>
-  `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(l.lat != null && l.lng != null ? `${l.lat},${l.lng}` : fullAddress(l))}`;
+  `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${l.note && /^Inside /i.test(l.note) ? l.note + ", " : ""}${fullAddress(l)}`)}`;
