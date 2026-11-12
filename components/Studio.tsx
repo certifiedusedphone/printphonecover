@@ -385,6 +385,7 @@ export default function Studio({ catalog, pickups = [], cancelled }: { catalog: 
                       <input id="pname" required autoComplete="name" value={address.name} onChange={(e) => setAddress({ ...address, name: e.target.value })} /></div>
                     <fieldset>
                       <legend>Pick up at</legend>
+                      <p className="note">We&apos;ll email you when it&apos;s ready. In a hurry? You can also walk up to any machine and print a case on the spot in a few minutes.</p>
                       <LocationFinder locations={pickups} selectedId={pickup?.id} onSelect={(l) => { setPickup(l); setError(""); }} />
                     </fieldset>
                   </>
