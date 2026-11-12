@@ -5,7 +5,7 @@ import { Logo } from "@/components/Logo";
 import { money, STATUS_LABEL, type OrderStatus } from "@/lib/shipping";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "Your order – PrintPhoneCover" };
+export const metadata = { title: "Your order – PrintPhoneCover", robots: { index: false, follow: false } };
 
 const FLOW: OrderStatus[] = ["pending", "paid", "printing", "shipped", "delivered"];
 

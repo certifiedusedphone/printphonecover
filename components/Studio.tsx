@@ -20,14 +20,15 @@ const TABS = [["photo", "Photo"], ["text", "Text"], ["bg", "Background"], ["desi
 type Tab = (typeof TABS)[number][0];
 type AddrCheck = null | { kind: "suggest"; suggested: Address } | { kind: "bad"; message: string };
 
-export default function Studio({ catalog, pickups = [], cancelled }: { catalog: Catalog; pickups?: Location[]; cancelled?: boolean }) {
-  const firstBrand: string = catalog.brands.find((b) => b.active)?.id ?? catalog.brands[0]?.id ?? "";
-  const firstDevice: string = catalog.devices.find((d) => d.brand_id === firstBrand)?.id ?? catalog.devices[0]?.id ?? "";
+export default function Studio({ catalog, pickups = [], cancelled, initialModel }: { catalog: Catalog; pickups?: Location[]; cancelled?: boolean; initialModel?: string }) {
+  const linked = initialModel ? catalog.devices.find((d) => d.id === initialModel) : undefined;
+  const firstBrand: string = linked?.brand_id ?? catalog.brands.find((b) => b.active)?.id ?? catalog.brands[0]?.id ?? "";
+  const firstDevice: string = linked?.id ?? catalog.devices.find((d) => d.brand_id === firstBrand)?.id ?? catalog.devices[0]?.id ?? "";
   const firstProduct: string = catalog.products.find((p) => catalog.variants.some((v) => v.device_id === firstDevice && v.product_id === p.id))?.id ?? catalog.products[0]?.id ?? "";
   const [brand, setBrand] = useState<string>(firstBrand);
   const [deviceId, setDeviceId] = useState<string>(firstDevice);
   const [productId, setProductId] = useState<string>(firstProduct);
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState(linked ? 2 : 1);
   const [tab, setTab] = useState<Tab>("photo");
   const [newText, setNewText] = useState("Made by you");
   const [newFont, setNewFont] = useState<FontKey>("bold");
@@ -429,6 +430,7 @@ export default function Studio({ catalog, pickups = [], cancelled }: { catalog: 
                 {error && <p className="error">{error}</p>}
                 <button className="btn block" type="submit" disabled={!!busy || !!check}>{busy || `Pay ${money(total)} with Stripe`}</button>
                 <p className="stripe-note">Secure card, Apple Pay and Google Pay checkout by Stripe. Sales tax is added at payment.</p>
+                <p className="stripe-note">By placing your order you agree to our <a href="/terms" target="_blank">Terms</a> and <a href="/privacy" target="_blank">Privacy Policy</a>, and confirm you have the right to print your photos. Custom cases can&apos;t be returned unless they arrive damaged or wrong (<a href="/returns" target="_blank">Returns</a>).</p>
               </form>
               <button className="btn-ghost" onClick={() => go(3)}>Back to design</button>
             </div>

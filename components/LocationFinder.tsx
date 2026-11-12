@@ -1,6 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { directionsUrl, fullAddress, miles, type Location } from "@/lib/locations";
+import { slugify } from "@/lib/site";
 
 type Origin = { lat: number; lng: number; label: string };
 
@@ -61,7 +62,7 @@ export function LocationFinder({ locations, selectedId, onSelect }: { locations:
           const body = (
             <>
               <div className="loc-head">
-                <strong>{l.name}</strong>
+                {onSelect ? <strong>{l.name}</strong> : <strong><a href={`/locations/${slugify(l.name)}`} style={{ color: "inherit" }}>{l.name}</a></strong>}
                 {d != null && <span className="dist">{d < 10 ? d.toFixed(1) : Math.round(d)} mi</span>}
               </div>
               <span>{fullAddress(l)}</span>

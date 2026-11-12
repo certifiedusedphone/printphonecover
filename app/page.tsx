@@ -1,9 +1,20 @@
 import Link from "next/link";
 import { Logo } from "@/components/Logo";
+import { SiteFooter } from "@/components/SiteFooter";
+import { getSettings } from "@/lib/server/settings";
+import { SITE_URL, SOCIALS } from "@/lib/site";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  const s = await getSettings();
+  const org = {
+    "@context": "https://schema.org", "@type": "Organization", name: "PrintPhoneCover", url: SITE_URL, logo: `${SITE_URL}/og.png`,
+    sameAs: SOCIALS.map((x) => s[x.key]).filter(Boolean),
+  };
   return (
     <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(org) }} />
       <header className="top"><div className="wrap top-in"><Logo /><div className="row"><Link className="btn-ghost" href="/locations">Find a machine</Link><Link className="btn" href="/design">Design your case</Link></div></div></header>
       <main className="wrap">
         <section className="hero">
@@ -18,12 +29,13 @@ export default function Home() {
           </div>
         </section>
         <section className="how" aria-label="How it works">
-          <div className="box"><span className="eyebrow">1</span><h3>Choose your phone</h3><p>iPhone models today, more brands coming soon.</p></div>
+          <div className="box"><span className="eyebrow">1</span><h3>Choose your phone</h3><p>60 models: iPhone, Samsung Galaxy, Google Pixel and moto. <Link href="/cases">See all</Link>.</p></div>
           <div className="box"><span className="eyebrow">2</span><h3>Design it</h3><p>Upload a photo, then move, resize and rotate it until it looks right.</p></div>
           <div className="box"><span className="eyebrow">3</span><h3>Pay securely</h3><p>Card, Apple Pay or Google Pay through Stripe.</p></div>
           <div className="box"><span className="eyebrow">4</span><h3>Ship or pick up</h3><p>Ship it to your door with USPS tracking, or pick it up free at one of our machines.</p></div>
         </section>
       </main>
+      <SiteFooter />
     </>
   );
 }

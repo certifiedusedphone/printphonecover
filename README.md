@@ -70,6 +70,8 @@ Local development: `npm install`, copy `.env.example` to `.env.local`, `npm run 
 - **New machine models:** Admin → Catalog → Add a phone model, paste the mask PNG link(s), set price and stock, tick For sale.
 - **Machine locations:** run `supabase/locations.sql` once, then add each machine in **Admin → Locations**. They appear on `/locations` (sorted by distance from the customer) and as free pickup points at checkout. Pickup orders use **Mark ready for pickup** and **Mark picked up** instead of shipping labels.
 - **Amazon / TikTok orders:** run `supabase/marketplace.sql` once. Then use **Admin → + Amazon / TikTok** for each marketplace order: enter the order ID and address, upload the buyer's photo, place it on the mask, and it joins the print queue as Paid. Marketplace buyers get no emails from the site; add tracking in Seller Central / TikTok Seller Center.
+- **Settings, social media and legal pages:** run `supabase/settings.sql` once. In **Admin → Settings**, add your TikTok, Instagram, Facebook and YouTube links (shown in the site footer) and your LLC name and support email (used on Contact, Privacy, Terms, Shipping and Returns). Have a lawyer review the policy pages.
+- **SEO:** `/sitemap.xml` lists the home, design, all phone model pages (`/cases/...`) and machine location pages (`/locations/...`). After connecting printphonecover.com, add the site in Google Search Console and submit `https://printphonecover.com/sitemap.xml`, and create a Google Business Profile for each machine location.
 - **Test the whole flow** in Stripe and EasyPost test mode, then switch both to live keys.
 - **Refunds** are done in the Stripe dashboard; cancel the order in Admin too.
 
